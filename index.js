@@ -5,7 +5,7 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS
+// CORS - Access Allow for all origins
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -18,10 +18,10 @@ app.use(express.json());
 const TRUECALLER_API = 'https://faisal-ali-truecaller.ftgmhacks.workers.dev/?key=ftgmisking&number=';
 const SIMDATA_API = 'https://multi-sim3.vercel.app/api/search?server=5&query=';
 
-// Helper function: نمبر کو 923XXXXXXXXX فارمیٹ میں لانے کے لیے
+// Helper function: Standardize phone number format (923XXXXXXXXX)
 function cleanNumber(number) {
     if (!number) return '';
-    let clean = number.toString().replace(/\D/g, '');
+    let clean = number.toString().replace(/\D/g, ''); // Remove non-digits
     if (clean.startsWith('0')) {
         clean = '92' + clean.substring(1);
     } else if (!clean.startsWith('92') && clean.length === 10) {
@@ -30,10 +30,12 @@ function cleanNumber(number) {
     return clean;
 }
 
-// Truecaller API call
+// Truecaller API Fetch Function
 async function getTruecallerData(number) {
     try {
         const cleanNum = cleanNumber(number);
+        if (!cleanNum) return null;
+        
         const response = await axios.get(TRUECALLER_API + cleanNum, { timeout: 6000 });
         if (response.data && response.data.data && response.data.data.name) {
             return {
@@ -47,7 +49,7 @@ async function getTruecallerData(number) {
     }
 }
 
-// SIM Database API call
+// SIM Database API Fetch Function
 async function getSIMData(query) {
     try {
         const response = await axios.get(SIMDATA_API + query, { timeout: 8000 });
@@ -94,16 +96,14 @@ app.get('/api/search', async (req, res) => {
             simDataResult = await getSIMData(cleanQuery);
             fetchedCNIC = cleanQuery;
         } else if (isNumber) {
-            // Step 1: نمبر سے ڈیٹا نکالیں
             const cleanedNum = cleanNumber(cleanQuery);
             const initialData = await getSIMData(cleanedNum);
 
             if (initialData && Array.isArray(initialData) && initialData.length > 0) {
-                // Step 2: CNIC نکالیں
                 fetchedCNIC = initialData[0].CNIC || initialData[0].cnic;
 
                 if (fetchedCNIC) {
-                    // Step 3: CNIC سے تمام Multi Data نکالیں
+                    // CNIC ملنے پر اس کے سارے نمبرز لے آئیں
                     simDataResult = await getSIMData(fetchedCNIC);
                 } else {
                     simDataResult = initialData;
@@ -125,21 +125,25 @@ app.get('/api/search', async (req, res) => {
             numbersList = multiData.map(item => item.number).filter(Boolean);
         }
 
-        // Step 4: Multi Data کے تمام نمبرز پر Parallel میں Truecaller چلائیں
+        // Truecaller Logic Execution
         let truecallerResults = [];
+
         if (numbersList.length > 0) {
+            // اگر SIM Multi-Data ملا ہو تو تمام نمبرز پر Truecaller چلائیں
             const limitedNumbers = numbersList.slice(0, 7);
             const promises = limitedNumbers.map(num => getTruecallerData(num));
             const results = await Promise.all(promises);
             truecallerResults = results.filter(item => item !== null);
         } else if (isNumber) {
-            const tcData = await getTruecallerData(cleanNumber(cleanQuery));
+            // 🔥 اہم ترین حصہ: اگر SIM Data بالکل نہ ملے (Null)، تب بھی دیے گئے نمبر کو Truecaller پر براہ راست چیک کریں
+            const formattedInputNumber = cleanNumber(cleanQuery);
+            const tcData = await getTruecallerData(formattedInputNumber);
             if (tcData) {
                 truecallerResults.push(tcData);
             }
         }
 
-        // Response - اب Combined Data نہیں آئے گا، صرف الگ الگ Multi Data آئے گا
+        // Response Data
         return res.json({
             success: true,
             developer: 'Ramzan Ahsan',
@@ -185,12 +189,12 @@ app.get('/', (req, res) => {
     });
 });
 
-// Local Testing
+// Local Testing Environment
 if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
 }
 
-// Vercel Export
+// Module Export for Serverless Vercel Architecture
 module.exports = app;
