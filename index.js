@@ -5,19 +5,26 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// CORS - تمام Origins اور Methods کو Allow کرنے کے لیے Custom Headers کے ساتھ
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
-// APIs
+// External APIs
 const TRUECALLER_API = 'https://faisal-ali-truecaller.ftgmhacks.workers.dev/?key=ftgmisking&number=';
 const SIMDATA_API = 'https://multi-sim3.vercel.app/api/search?server=5&query=';
 
 // Helper function to clean phone number to standard format (923XXXXXXXXX)
 function cleanNumber(number) {
-    let clean = number.toString().replace(/\D/g, ''); // Removes non-digits
+    if (!number) return '';
+    let clean = number.toString().replace(/\D/g, ''); // Non-digits کو ختم کرتا ہے
     if (clean.startsWith('0')) {
         clean = '92' + clean.substring(1);
-    } else if (!clean.startsWith('92')) {
+    } else if (!clean.startsWith('92') && clean.length === 10) {
         clean = '92' + clean;
     }
     return clean;
@@ -27,7 +34,7 @@ function cleanNumber(number) {
 async function getTruecallerData(number) {
     try {
         const cleanNum = cleanNumber(number);
-        const response = await axios.get(TRUECALLER_API + cleanNum, { timeout: 7000 });
+        const response = await axios.get(TRUECALLER_API + cleanNum, { timeout: 6000 });
         if (response.data && response.data.data && response.data.data.name) {
             return {
                 number: number,
@@ -53,7 +60,7 @@ async function getSIMData(query) {
     }
 }
 
-// Main API endpoint
+// Main API Search Endpoint
 app.get('/api/search', async (req, res) => {
     try {
         const { query } = req.query;
@@ -88,18 +95,18 @@ app.get('/api/search', async (req, res) => {
 
         if (simData && Array.isArray(simData)) {
             multiData = simData.map(item => ({
-                number: item.NUMBER || item.number,
-                name: item.NAME || item.name,
-                cnic: item.CNIC || item.cnic,
-                address: item.ADRESS || item.address || item.ADDRESS
+                number: item.NUMBER || item.number || '',
+                name: item.NAME || item.name || '',
+                cnic: item.CNIC || item.cnic || '',
+                address: item.ADRESS || item.address || item.ADDRESS || ''
             }));
             numbers = multiData.map(item => item.number).filter(Boolean);
         }
 
-        // Parallel execution for Truecaller fetching to prevent timeouts
+        // Fast Parallel Processing for Truecaller
         let truecallerResults = [];
         if (numbers.length > 0) {
-            const limitedNumbers = numbers.slice(0, 5); // Limit to top 5
+            const limitedNumbers = numbers.slice(0, 5); // Timeout سے بچنے کے لیے پہلے 5 نمبرز
             const promises = limitedNumbers.map(num => getTruecallerData(num));
             const results = await Promise.all(promises);
             truecallerResults = results.filter(item => item !== null);
@@ -110,7 +117,7 @@ app.get('/api/search', async (req, res) => {
             }
         }
 
-        // Combined Data mapping
+        // Combining SIM Data with Truecaller Data
         const combinedData = multiData.map(sim => {
             const tcMatch = truecallerResults.find(tc => cleanNumber(tc.number) === cleanNumber(sim.number));
             return {
@@ -144,7 +151,7 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// Health check endpoint
+// Health check Endpoint
 app.get('/api/health', (req, res) => {
     res.json({
         status: 'API is running',
@@ -153,7 +160,7 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// Root endpoint
+// Root Endpoint
 app.get('/', (req, res) => {
     res.json({
         message: 'SIM Data & Truecaller Combined API',
@@ -166,12 +173,12 @@ app.get('/', (req, res) => {
     });
 });
 
-// For local testing
+// Local Development Server
 if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
 }
 
-// Export app for Vercel
+// Module Export for Vercel Serverless Architecture
 module.exports = app;
