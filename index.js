@@ -5,7 +5,7 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS - تمام Origins اور Methods کو Allow کرنے کے لیے
+// CORS
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -21,7 +21,7 @@ const SIMDATA_API = 'https://multi-sim3.vercel.app/api/search?server=5&query=';
 // Helper function: نمبر کو 923XXXXXXXXX فارمیٹ میں لانے کے لیے
 function cleanNumber(number) {
     if (!number) return '';
-    let clean = number.toString().replace(/\D/g, ''); // Non-digits ختم کرتا ہے
+    let clean = number.toString().replace(/\D/g, '');
     if (clean.startsWith('0')) {
         clean = '92' + clean.substring(1);
     } else if (!clean.startsWith('92') && clean.length === 10) {
@@ -30,7 +30,7 @@ function cleanNumber(number) {
     return clean;
 }
 
-// Truecaller سے نام نکالنے کا فنکشن
+// Truecaller API call
 async function getTruecallerData(number) {
     try {
         const cleanNum = cleanNumber(number);
@@ -47,7 +47,7 @@ async function getTruecallerData(number) {
     }
 }
 
-// SIM Database سے ڈیٹا نکالنے کا فنکشن
+// SIM Database API call
 async function getSIMData(query) {
     try {
         const response = await axios.get(SIMDATA_API + query, { timeout: 8000 });
@@ -91,20 +91,19 @@ app.get('/api/search', async (req, res) => {
         let fetchedCNIC = null;
 
         if (isCNIC) {
-            // اگر برا ہِ راست CNIC دیا گیا ہو
             simDataResult = await getSIMData(cleanQuery);
             fetchedCNIC = cleanQuery;
         } else if (isNumber) {
-            //Step 1: اگر نمبر دیا گیا ہو تو پہلے اس نمبر کا ڈیٹا نکالیں
+            // Step 1: نمبر سے ڈیٹا نکالیں
             const cleanedNum = cleanNumber(cleanQuery);
             const initialData = await getSIMData(cleanedNum);
 
             if (initialData && Array.isArray(initialData) && initialData.length > 0) {
-                // Step 2: اس نمبر سے منسلک CNIC تلاش کریں
+                // Step 2: CNIC نکالیں
                 fetchedCNIC = initialData[0].CNIC || initialData[0].cnic;
 
                 if (fetchedCNIC) {
-                    // Step 3: اس CNIC کو استعمال کرتے ہوئے اس شحص کے تمام نمبرز (Multi Data) نکالیں
+                    // Step 3: CNIC سے تمام Multi Data نکالیں
                     simDataResult = await getSIMData(fetchedCNIC);
                 } else {
                     simDataResult = initialData;
@@ -123,38 +122,24 @@ app.get('/api/search', async (req, res) => {
                 address: item.ADRESS || item.address || item.ADDRESS || ''
             }));
             
-            // تمام نکالے گئے نمبرز کی لسٹ
             numbersList = multiData.map(item => item.number).filter(Boolean);
         }
 
-        // Step 4: تمام Multi Data والے نمبرز کے لیے Truecaller API ایک ساتھ (Parallel) چلائیں
+        // Step 4: Multi Data کے تمام نمبرز پر Parallel میں Truecaller چلائیں
         let truecallerResults = [];
         if (numbersList.length > 0) {
-            // سست روی اور Vercel Timeout سے بچنے کے لیے زیادہ سے زیادہ پہلے 7 نمبرز پر Truecaller چلائیں
             const limitedNumbers = numbersList.slice(0, 7);
             const promises = limitedNumbers.map(num => getTruecallerData(num));
             const results = await Promise.all(promises);
             truecallerResults = results.filter(item => item !== null);
         } else if (isNumber) {
-            // اگر SIM ڈیٹا میں کچھ نہ ملے تو صرف اس نمبر کا Truecaller چیک کریں
             const tcData = await getTruecallerData(cleanNumber(cleanQuery));
             if (tcData) {
                 truecallerResults.push(tcData);
             }
         }
 
-        // Step 5: SIM Data اور Truecaller Data کو ملانا (Combined Data)
-        const combinedData = multiData.map(sim => {
-            const tcMatch = truecallerResults.find(tc => cleanNumber(tc.number) === cleanNumber(sim.number));
-            return {
-                number: sim.number,
-                sim_name: sim.name,
-                truecaller_name: tcMatch ? tcMatch.name : 'Not Found',
-                cnic: sim.cnic,
-                address: sim.address
-            };
-        });
-
+        // Response - اب Combined Data نہیں آئے گا، صرف الگ الگ Multi Data آئے گا
         return res.json({
             success: true,
             developer: 'Ramzan Ahsan',
@@ -164,8 +149,7 @@ app.get('/api/search', async (req, res) => {
             extracted_cnic: fetchedCNIC || 'N/A',
             total_numbers_found: multiData.length,
             sim_data: multiData,
-            truecaller_data: truecallerResults,
-            combined_data: combinedData
+            truecaller_data: truecallerResults
         });
 
     } catch (error) {
@@ -191,7 +175,7 @@ app.get('/api/health', (req, res) => {
 // Root Endpoint
 app.get('/', (req, res) => {
     res.json({
-        message: 'SIM Multi-Data & Truecaller Combined API',
+        message: 'SIM Multi-Data & Truecaller API',
         endpoints: {
             search: '/api/search?query=YOUR_NUMBER_OR_CNIC',
             health: '/api/health'
