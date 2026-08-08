@@ -5,7 +5,7 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS - تمام Origins اور Methods کو Allow کرنے کے لیے Custom Headers کے ساتھ
+// CORS - تمام Origins اور Methods کو Allow کرنے کے لیے
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -18,10 +18,10 @@ app.use(express.json());
 const TRUECALLER_API = 'https://faisal-ali-truecaller.ftgmhacks.workers.dev/?key=ftgmisking&number=';
 const SIMDATA_API = 'https://multi-sim3.vercel.app/api/search?server=5&query=';
 
-// Helper function to clean phone number to standard format (923XXXXXXXXX)
+// Helper function: نمبر کو 923XXXXXXXXX فارمیٹ میں لانے کے لیے
 function cleanNumber(number) {
     if (!number) return '';
-    let clean = number.toString().replace(/\D/g, ''); // Non-digits کو ختم کرتا ہے
+    let clean = number.toString().replace(/\D/g, ''); // Non-digits ختم کرتا ہے
     if (clean.startsWith('0')) {
         clean = '92' + clean.substring(1);
     } else if (!clean.startsWith('92') && clean.length === 10) {
@@ -30,7 +30,7 @@ function cleanNumber(number) {
     return clean;
 }
 
-// Function to get Truecaller data
+// Truecaller سے نام نکالنے کا فنکشن
 async function getTruecallerData(number) {
     try {
         const cleanNum = cleanNumber(number);
@@ -47,7 +47,7 @@ async function getTruecallerData(number) {
     }
 }
 
-// Function to get SIM data
+// SIM Database سے ڈیٹا نکالنے کا فنکشن
 async function getSIMData(query) {
     try {
         const response = await axios.get(SIMDATA_API + query, { timeout: 8000 });
@@ -60,7 +60,7 @@ async function getSIMData(query) {
     }
 }
 
-// Main API Search Endpoint
+// Main Search Endpoint
 app.get('/api/search', async (req, res) => {
     try {
         const { query } = req.query;
@@ -81,43 +81,69 @@ app.get('/api/search', async (req, res) => {
         if (!isCNIC && !isNumber) {
             return res.status(400).json({
                 success: false,
-                message: 'Invalid query format. Please provide a valid 13-digit CNIC or valid phone number',
+                message: 'Invalid query format. Provide a valid 13-digit CNIC or phone number',
                 developer: 'Ramzan Ahsan',
                 group: 'https://chat.whatsapp.com/LYqp196iG0E0H5QtPR3ogZ'
             });
         }
 
-        const queryToSearch = isNumber ? cleanNumber(cleanQuery) : cleanQuery;
-        const simData = await getSIMData(queryToSearch);
+        let simDataResult = null;
+        let fetchedCNIC = null;
+
+        if (isCNIC) {
+            // اگر برا ہِ راست CNIC دیا گیا ہو
+            simDataResult = await getSIMData(cleanQuery);
+            fetchedCNIC = cleanQuery;
+        } else if (isNumber) {
+            //Step 1: اگر نمبر دیا گیا ہو تو پہلے اس نمبر کا ڈیٹا نکالیں
+            const cleanedNum = cleanNumber(cleanQuery);
+            const initialData = await getSIMData(cleanedNum);
+
+            if (initialData && Array.isArray(initialData) && initialData.length > 0) {
+                // Step 2: اس نمبر سے منسلک CNIC تلاش کریں
+                fetchedCNIC = initialData[0].CNIC || initialData[0].cnic;
+
+                if (fetchedCNIC) {
+                    // Step 3: اس CNIC کو استعمال کرتے ہوئے اس شحص کے تمام نمبرز (Multi Data) نکالیں
+                    simDataResult = await getSIMData(fetchedCNIC);
+                } else {
+                    simDataResult = initialData;
+                }
+            }
+        }
 
         let multiData = [];
-        let numbers = [];
+        let numbersList = [];
 
-        if (simData && Array.isArray(simData)) {
-            multiData = simData.map(item => ({
+        if (simDataResult && Array.isArray(simDataResult)) {
+            multiData = simDataResult.map(item => ({
                 number: item.NUMBER || item.number || '',
                 name: item.NAME || item.name || '',
                 cnic: item.CNIC || item.cnic || '',
                 address: item.ADRESS || item.address || item.ADDRESS || ''
             }));
-            numbers = multiData.map(item => item.number).filter(Boolean);
+            
+            // تمام نکالے گئے نمبرز کی لسٹ
+            numbersList = multiData.map(item => item.number).filter(Boolean);
         }
 
-        // Fast Parallel Processing for Truecaller
+        // Step 4: تمام Multi Data والے نمبرز کے لیے Truecaller API ایک ساتھ (Parallel) چلائیں
         let truecallerResults = [];
-        if (numbers.length > 0) {
-            const limitedNumbers = numbers.slice(0, 5); // Timeout سے بچنے کے لیے پہلے 5 نمبرز
+        if (numbersList.length > 0) {
+            // سست روی اور Vercel Timeout سے بچنے کے لیے زیادہ سے زیادہ پہلے 7 نمبرز پر Truecaller چلائیں
+            const limitedNumbers = numbersList.slice(0, 7);
             const promises = limitedNumbers.map(num => getTruecallerData(num));
             const results = await Promise.all(promises);
             truecallerResults = results.filter(item => item !== null);
         } else if (isNumber) {
-            const tcData = await getTruecallerData(queryToSearch);
+            // اگر SIM ڈیٹا میں کچھ نہ ملے تو صرف اس نمبر کا Truecaller چیک کریں
+            const tcData = await getTruecallerData(cleanNumber(cleanQuery));
             if (tcData) {
                 truecallerResults.push(tcData);
             }
         }
 
-        // Combining SIM Data with Truecaller Data
+        // Step 5: SIM Data اور Truecaller Data کو ملانا (Combined Data)
         const combinedData = multiData.map(sim => {
             const tcMatch = truecallerResults.find(tc => cleanNumber(tc.number) === cleanNumber(sim.number));
             return {
@@ -135,6 +161,8 @@ app.get('/api/search', async (req, res) => {
             group: 'https://chat.whatsapp.com/LYqp196iG0E0H5QtPR3ogZ',
             query: cleanQuery,
             query_type: isCNIC ? 'CNIC' : 'NUMBER',
+            extracted_cnic: fetchedCNIC || 'N/A',
+            total_numbers_found: multiData.length,
             sim_data: multiData,
             truecaller_data: truecallerResults,
             combined_data: combinedData
@@ -163,7 +191,7 @@ app.get('/api/health', (req, res) => {
 // Root Endpoint
 app.get('/', (req, res) => {
     res.json({
-        message: 'SIM Data & Truecaller Combined API',
+        message: 'SIM Multi-Data & Truecaller Combined API',
         endpoints: {
             search: '/api/search?query=YOUR_NUMBER_OR_CNIC',
             health: '/api/health'
@@ -173,12 +201,12 @@ app.get('/', (req, res) => {
     });
 });
 
-// Local Development Server
+// Local Testing
 if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
 }
 
-// Module Export for Vercel Serverless Architecture
+// Vercel Export
 module.exports = app;
