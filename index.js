@@ -73,7 +73,7 @@ async function getTruecallerData(number) {
     }
 }
 
-// SIM Database API Fetch Function
+// SIM Database API Fetch Function (Updated for new response format)
 async function getSIMData(query) {
     try {
         const formattedQuery = formatForSIMAPI(query);
@@ -87,10 +87,14 @@ async function getSIMData(query) {
         });
 
         if (response.data) {
-            if (response.data.status === 'success' && response.data.DATA) {
+            // Naye JSON Response ke mutabiq array extraction:
+            // Structure: response.data.data.records
+            if (response.data.data && Array.isArray(response.data.data.records)) {
+                return response.data.data.records;
+            } else if (response.data.DATA && Array.isArray(response.data.DATA)) {
                 return response.data.DATA;
-            } else if (Array.isArray(response.data.DATA)) {
-                return response.data.DATA;
+            } else if (Array.isArray(response.data.records)) {
+                return response.data.records;
             } else if (Array.isArray(response.data)) {
                 return response.data;
             }
@@ -138,12 +142,15 @@ app.get('/api/search', async (req, res) => {
             simDataResult = await getSIMData(digitsOnly);
             fetchedCNIC = digitsOnly;
         } else if (isNumber) {
+            // First search with 3XXXXXXXXX
             const initialData = await getSIMData(formattedSIMQuery);
 
             if (initialData && Array.isArray(initialData) && initialData.length > 0) {
-                fetchedCNIC = initialData[0].CNIC || initialData[0].cnic;
+                // Check all possible key variations for CNIC
+                fetchedCNIC = initialData[0].cnic || initialData[0].CNIC;
 
                 if (fetchedCNIC && fetchedCNIC.replace(/\D/g, '').length === 13) {
+                    // Fetch multi-numbers using CNIC
                     const cnicData = await getSIMData(fetchedCNIC);
                     simDataResult = (cnicData && Array.isArray(cnicData) && cnicData.length > 0) ? cnicData : initialData;
                 } else {
@@ -157,10 +164,10 @@ app.get('/api/search', async (req, res) => {
 
         if (simDataResult && Array.isArray(simDataResult)) {
             multiData = simDataResult.map(item => ({
-                number: item.NUMBER || item.number || item.Mobile || '',
-                name: item.NAME || item.name || item.Name || '',
-                cnic: item.CNIC || item.cnic || item.Cnic || '',
-                address: item.ADRESS || item.address || item.ADDRESS || item.Address || ''
+                number: item.phone || item.NUMBER || item.number || item.Mobile || '',
+                name: item.full_name || item.NAME || item.name || item.Name || '',
+                cnic: item.cnic || item.CNIC || item.Cnic || '',
+                address: item.address || item.ADRESS || item.ADDRESS || item.Address || ''
             }));
             
             numbersList = multiData.map(item => item.number).filter(Boolean);
