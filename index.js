@@ -5,7 +5,11 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS - Access Allow for all origins
+// Config Constants
+const DEVELOPER_NAME = 'Ramzan Ahsan';
+const WHATSAPP_GROUP = 'https://chat.whatsapp.com/DiNDV4TselTHJxo4qElUiv';
+
+// CORS Configuration
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -18,10 +22,10 @@ app.use(express.json());
 const TRUECALLER_API = 'https://faisal-ali-truecaller.ftgmhacks.workers.dev/?key=ftgm7795caller&number=';
 const SIMDATA_API = 'https://fam-official.serv00.net/api/famdatabase.php?number=';
 
-// Helper function: Standardize phone number format (923XXXXXXXXX)
-function cleanNumber(number) {
+// Helper 1: Standardize for Truecaller API (Needs 923XXXXXXXXX format)
+function formatForTruecaller(number) {
     if (!number) return '';
-    let clean = number.toString().replace(/\D/g, ''); // Remove non-digits
+    let clean = number.toString().replace(/\D/g, '');
     if (clean.startsWith('0')) {
         clean = '92' + clean.substring(1);
     } else if (!clean.startsWith('92') && clean.length === 10) {
@@ -30,10 +34,30 @@ function cleanNumber(number) {
     return clean;
 }
 
+// Helper 2: Standardize for SIM Database API (Needs 3XXXXXXXXX or 13-digit CNIC)
+function formatForSIMAPI(query) {
+    if (!query) return '';
+    let clean = query.toString().replace(/\D/g, '');
+    
+    // Agar CNIC (13 digits) hai to waisa hi rakhein
+    if (clean.length === 13) {
+        return clean;
+    }
+    
+    // Phone numbers handle karne ke liye (3XXXXXXXXX)
+    if (clean.startsWith('92')) {
+        clean = clean.substring(2);
+    } else if (clean.startsWith('0')) {
+        clean = clean.substring(1);
+    }
+    
+    return clean;
+}
+
 // Truecaller API Fetch Function
 async function getTruecallerData(number) {
     try {
-        const cleanNum = cleanNumber(number);
+        const cleanNum = formatForTruecaller(number);
         if (!cleanNum) return null;
         
         const response = await axios.get(TRUECALLER_API + cleanNum, { timeout: 6000 });
@@ -52,9 +76,24 @@ async function getTruecallerData(number) {
 // SIM Database API Fetch Function
 async function getSIMData(query) {
     try {
-        const response = await axios.get(SIMDATA_API + query, { timeout: 8000 });
-        if (response.data && response.data.status === 'success' && response.data.DATA) {
-            return response.data.DATA;
+        const formattedQuery = formatForSIMAPI(query);
+        if (!formattedQuery) return null;
+
+        const response = await axios.get(SIMDATA_API + formattedQuery, { 
+            timeout: 10000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+            }
+        });
+
+        if (response.data) {
+            if (response.data.status === 'success' && response.data.DATA) {
+                return response.data.DATA;
+            } else if (Array.isArray(response.data.DATA)) {
+                return response.data.DATA;
+            } else if (Array.isArray(response.data)) {
+                return response.data;
+            }
         }
         return null;
     } catch (error) {
@@ -71,21 +110,24 @@ app.get('/api/search', async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Please provide a query (number or CNIC)',
-                developer: 'Ramzan Ahsan',
-                group: 'https://chat.whatsapp.com/LYqp196iG0E0H5QtPR3ogZ'
+                developer: DEVELOPER_NAME,
+                group: WHATSAPP_GROUP
             });
         }
 
-        const cleanQuery = query.trim();
-        const isCNIC = /^\d{13}$/.test(cleanQuery);
-        const isNumber = /^\d{10,12}$/.test(cleanQuery) || cleanQuery.startsWith('03');
+        const rawQuery = query.toString().trim();
+        const digitsOnly = rawQuery.replace(/\D/g, '');
+
+        const isCNIC = digitsOnly.length === 13;
+        const formattedSIMQuery = formatForSIMAPI(rawQuery);
+        const isNumber = /^\d{10}$/.test(formattedSIMQuery) && formattedSIMQuery.startsWith('3');
 
         if (!isCNIC && !isNumber) {
             return res.status(400).json({
                 success: false,
-                message: 'Invalid query format. Provide a valid 13-digit CNIC or phone number',
-                developer: 'Ramzan Ahsan',
-                group: 'https://chat.whatsapp.com/LYqp196iG0E0H5QtPR3ogZ'
+                message: 'Invalid query format. Provide a valid 13-digit CNIC or a Pakistani mobile number (e.g. 03XXXXXXXXX or 3XXXXXXXXX)',
+                developer: DEVELOPER_NAME,
+                group: WHATSAPP_GROUP
             });
         }
 
@@ -93,18 +135,17 @@ app.get('/api/search', async (req, res) => {
         let fetchedCNIC = null;
 
         if (isCNIC) {
-            simDataResult = await getSIMData(cleanQuery);
-            fetchedCNIC = cleanQuery;
+            simDataResult = await getSIMData(digitsOnly);
+            fetchedCNIC = digitsOnly;
         } else if (isNumber) {
-            const cleanedNum = cleanNumber(cleanQuery);
-            const initialData = await getSIMData(cleanedNum);
+            const initialData = await getSIMData(formattedSIMQuery);
 
             if (initialData && Array.isArray(initialData) && initialData.length > 0) {
                 fetchedCNIC = initialData[0].CNIC || initialData[0].cnic;
 
-                if (fetchedCNIC) {
-                    // CNIC ملنے پر اس کے سارے نمبرز لے آئیں
-                    simDataResult = await getSIMData(fetchedCNIC);
+                if (fetchedCNIC && fetchedCNIC.replace(/\D/g, '').length === 13) {
+                    const cnicData = await getSIMData(fetchedCNIC);
+                    simDataResult = (cnicData && Array.isArray(cnicData) && cnicData.length > 0) ? cnicData : initialData;
                 } else {
                     simDataResult = initialData;
                 }
@@ -116,10 +157,10 @@ app.get('/api/search', async (req, res) => {
 
         if (simDataResult && Array.isArray(simDataResult)) {
             multiData = simDataResult.map(item => ({
-                number: item.NUMBER || item.number || '',
-                name: item.NAME || item.name || '',
-                cnic: item.CNIC || item.cnic || '',
-                address: item.ADRESS || item.address || item.ADDRESS || ''
+                number: item.NUMBER || item.number || item.Mobile || '',
+                name: item.NAME || item.name || item.Name || '',
+                cnic: item.CNIC || item.cnic || item.Cnic || '',
+                address: item.ADRESS || item.address || item.ADDRESS || item.Address || ''
             }));
             
             numbersList = multiData.map(item => item.number).filter(Boolean);
@@ -129,26 +170,22 @@ app.get('/api/search', async (req, res) => {
         let truecallerResults = [];
 
         if (numbersList.length > 0) {
-            // اگر SIM Multi-Data ملا ہو تو تمام نمبرز پر Truecaller چلائیں
-            const limitedNumbers = numbersList.slice(0, 7);
+            const limitedNumbers = [...new Set(numbersList)].slice(0, 7);
             const promises = limitedNumbers.map(num => getTruecallerData(num));
             const results = await Promise.all(promises);
             truecallerResults = results.filter(item => item !== null);
         } else if (isNumber) {
-            // 🔥 اہم ترین حصہ: اگر SIM Data بالکل نہ ملے (Null)، تب بھی دیے گئے نمبر کو Truecaller پر براہ راست چیک کریں
-            const formattedInputNumber = cleanNumber(cleanQuery);
-            const tcData = await getTruecallerData(formattedInputNumber);
+            const tcData = await getTruecallerData(rawQuery);
             if (tcData) {
                 truecallerResults.push(tcData);
             }
         }
 
-        // Response Data
         return res.json({
             success: true,
-            developer: 'Ramzan Ahsan',
-            group: 'https://chat.whatsapp.com/LYqp196iG0E0H5QtPR3ogZ',
-            query: cleanQuery,
+            developer: DEVELOPER_NAME,
+            group: WHATSAPP_GROUP,
+            query: rawQuery,
             query_type: isCNIC ? 'CNIC' : 'NUMBER',
             extracted_cnic: fetchedCNIC || 'N/A',
             total_numbers_found: multiData.length,
@@ -161,8 +198,8 @@ app.get('/api/search', async (req, res) => {
             success: false,
             message: 'Error processing request',
             error: error.message,
-            developer: 'Ramzan Ahsan',
-            group: 'https://chat.whatsapp.com/LYqp196iG0E0H5QtPR3ogZ'
+            developer: DEVELOPER_NAME,
+            group: WHATSAPP_GROUP
         });
     }
 });
@@ -171,8 +208,8 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/health', (req, res) => {
     res.json({
         status: 'API is running',
-        developer: 'Ramzan Ahsan',
-        group: 'https://chat.whatsapp.com/LYqp196iG0E0H5QtPR3ogZ'
+        developer: DEVELOPER_NAME,
+        group: WHATSAPP_GROUP
     });
 });
 
@@ -184,17 +221,16 @@ app.get('/', (req, res) => {
             search: '/api/search?query=YOUR_NUMBER_OR_CNIC',
             health: '/api/health'
         },
-        developer: 'Ramzan Ahsan',
-        group: 'https://chat.whatsapp.com/LYqp196iG0E0H5QtPR3ogZ'
+        developer: DEVELOPER_NAME,
+        group: WHATSAPP_GROUP
     });
 });
 
-// Local Testing Environment
+// Local Testing
 if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
 }
 
-// Module Export for Serverless Vercel Architecture
 module.exports = app;
