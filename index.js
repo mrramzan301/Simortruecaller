@@ -16,7 +16,7 @@ app.use(express.json());
 
 // External APIs
 const TRUECALLER_API = 'https://faisal-ali-truecaller.ftgmhacks.workers.dev/?key=ftgm7795caller&number=';
-const SIMDATA_API = 'https://multi-sim3.vercel.app/api/search?server=5&query=';
+const SIMDATA_API = 'https://fam-official.serv00.net/api/famdatabase.php?number=';
 
 // Helper function: Standardize phone number format (923XXXXXXXXX)
 function cleanNumber(number) {
